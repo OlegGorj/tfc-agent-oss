@@ -35,13 +35,15 @@ func (e *TerraformExecutor) ExecuteRun(ctx context.Context, run *models.RunEvent
 	defer os.RemoveAll(runDir)
 
 	// Download configuration version
-	if err := e.downloadConfig(run.ConfigVer, runDir); err != nil {
+	configVer := run.Relationships.ConfigurationVersion.Data.ID
+	if err := e.downloadConfig(configVer, runDir); err != nil {
 		return fmt.Errorf("download config: %w", err)
 	}
 
 	// Download state if exists
-	if run.StateVer != "" {
-		if err := e.downloadState(run.StateVer, runDir); err != nil {
+	// Note: State version handling might need to be added to the RunEvent model
+	if run.Attributes.StateVer != "" {
+		if err := e.downloadState(run.Attributes.StateVer, runDir); err != nil {
 			return fmt.Errorf("download state: %w", err)
 		}
 	}
@@ -52,13 +54,13 @@ func (e *TerraformExecutor) ExecuteRun(ctx context.Context, run *models.RunEvent
 	}
 
 	// Run plan or apply based on run type
-	switch run.Status {
+	switch run.Attributes.Status {
 	case "planning":
 		return e.runPlan(ctx, runDir, run)
 	case "applying":
 		return e.runApply(ctx, runDir, run)
 	default:
-		return fmt.Errorf("unknown run status: %s", run.Status)
+		return fmt.Errorf("unknown run status: %s", run.Attributes.Status)
 	}
 }
 

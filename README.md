@@ -40,7 +40,13 @@ export TF_API_TOKEN="your-token"
 export TF_ADDRESS="https://app.terraform.io"
 export TF_AGENT_NAME="custom-agent-1"
 export TF_WORKSPACE_DIR="/tmp/terraform-runs"
+export TF_ORGANIZATION="your-org-name"      # Required for agent pool lookup
+export TF_AGENT_POOL_ID="apool-xxx"        # Optional: specify pool directly
 
 ./bin/tfc-agent-oss
 ```
+
+Note: You must either:
+1. Set `TF_ORGANIZATION` to let the agent find the default pool
+2. Set `TF_AGENT_POOL_ID` to specify the pool directly
 

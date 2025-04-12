@@ -7,6 +7,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/oleggorj/tfc-agent-oss/internal/models"
@@ -42,56 +44,266 @@ func NewClient(baseURL, token string) *Client {
 }
 
 func (c *Client) RegisterAgent(config *models.AgentConfig) error {
+	// Add retries for registration
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		err := c.doRegisterAgent(config)
+		if err == nil {
+			return nil
+		}
+
+		if i < maxRetries-1 {
+			time.Sleep(time.Second * time.Duration(i+1))
+			continue
+		}
+		return fmt.Errorf("failed to register agent after %d attempts: %w", maxRetries, err)
+	}
+	return nil
+}
+
+func (c *Client) doRegisterAgent(config *models.AgentConfig) error {
+	// First, get agent pool ID if not provided
+	if config.AgentPoolID == "" {
+		poolID, err := c.getDefaultAgentPoolID()
+		if err != nil {
+			return fmt.Errorf("get default agent pool: %w", err)
+		}
+		config.AgentPoolID = poolID
+	}
+
+	// Create authentication token for the agent
 	payload := map[string]interface{}{
 		"data": map[string]interface{}{
-			"type": "agent",
+			"type": "authentication-tokens",
 			"attributes": map[string]interface{}{
-				"name": config.Name,
-				"tags": config.Tags,
+				"description": fmt.Sprintf("Token for agent %s", config.Name),
 			},
 		},
 	}
 
-	req, err := c.newRequest("POST", "/api/v2/agents", payload)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("create register request: %w", err)
+		return fmt.Errorf("marshal payload: %w", err)
 	}
+
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("%s/api/v2/agent-pools/%s/authentication-tokens",
+			c.baseURL, config.AgentPoolID),
+		bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("register agent: %w", err)
+		return fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
 	}
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("unexpected status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var response struct {
+		Data struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Token string `json:"token"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	// Store agent ID and update token
+	config.AgentID = response.Data.ID
+	config.Token = response.Data.Attributes.Token
 
 	return nil
 }
 
-func (c *Client) PollForRuns() (*models.RunEvent, error) {
-	req, err := c.newRequest("GET", "/api/v2/agent-pools/runs/next", nil)
+func (c *Client) getDefaultAgentPoolID() (string, error) {
+	req, err := http.NewRequest("GET",
+		fmt.Sprintf("%s/api/v2/organizations/%s/agent-pools",
+			c.baseURL, os.Getenv("TF_ORGANIZATION")),
+		nil)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	if len(response.Data) == 0 {
+		return "", fmt.Errorf("no agent pools found")
+	}
+
+	return response.Data[0].ID, nil
+}
+
+func (c *Client) PollForRuns() (*models.RunEvent, error) {
+	// Get agent pool ID if not already set
+	agentPoolID := os.Getenv("TF_AGENT_POOL_ID")
+	if agentPoolID == "" {
+		var err error
+		agentPoolID, err = c.getDefaultAgentPoolID()
+		if err != nil {
+			return nil, fmt.Errorf("get default agent pool: %w", err)
+		}
+	}
+
+	// Create request with proper headers
+	req, err := http.NewRequest("GET",
+		fmt.Sprintf("%s/api/v2/agent-pools/%s/runs", // Changed from /tasks to /runs
+			c.baseURL,
+			agentPoolID),
+		nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
+	req.Header.Set("Accept", "application/vnd.api+json")
+	req.Header.Set("Content-Type", "application/vnd.api+json")
+
+	// Add query parameters for filtering
+	q := req.URL.Query()
+	q.Add("filter[status]", "pending")
+	q.Add("include", "configuration_version,workspace")
+	req.URL.RawQuery = q.Encode()
+
+	if os.Getenv("TF_LOG") == "debug" {
+		fmt.Printf("Polling URL: %s\n", req.URL.String())
+		fmt.Printf("Authorization: Bearer %s\n", c.token)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNoContent {
+	// Read body for error reporting and debugging
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	if os.Getenv("TF_LOG") == "debug" {
+		fmt.Printf("Poll response status: %d\nBody: %s\n", resp.StatusCode, string(body))
+	}
+
+	// Handle response
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusNotFound:
 		return nil, nil
-	}
+	case http.StatusOK:
+		// Verify content type
+		contentType := resp.Header.Get("Content-Type")
+		if !strings.Contains(contentType, "application/vnd.api+json") {
+			return nil, fmt.Errorf("unexpected content type: %s", contentType)
+		}
 
-	var runEvent models.RunEvent
-	if err := json.NewDecoder(resp.Body).Decode(&runEvent); err != nil {
-		return nil, err
-	}
+		// Parse response
+		var response struct {
+			Data struct {
+				ID         string `json:"id"`
+				Type       string `json:"type"`
+				Attributes struct {
+					Status     string    `json:"status"`
+					HasChanges bool      `json:"has_changes"`
+					CreatedAt  time.Time `json:"created_at"`
+					StateVer   string    `json:"state_version"` // Added to match RunEvent model
+				} `json:"attributes"`
+				Relationships struct {
+					Workspace struct {
+						Data struct {
+							ID   string `json:"id"`
+							Type string `json:"type"`
+						} `json:"data"`
+					} `json:"workspace"`
+					ConfigurationVersion struct {
+						Data struct {
+							ID   string `json:"id"`
+							Type string `json:"type"`
+						} `json:"data"`
+					} `json:"configuration_version"`
+					StateVersion struct { // Added to match RunEvent model
+						Data struct {
+							ID   string `json:"id"`
+							Type string `json:"type"`
+						} `json:"data"`
+					} `json:"state_version"`
+				} `json:"relationships"`
+			} `json:"data"`
+		}
 
-	return &runEvent, nil
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, fmt.Errorf("parse response: %w, body: %s", err, string(body))
+		}
+
+		// Create RunEvent with matching structure
+		run := &models.RunEvent{
+			ID:   response.Data.ID,
+			Type: response.Data.Type,
+			Attributes: models.RunEventAttributes{
+				Status:     response.Data.Attributes.Status,
+				HasChanges: response.Data.Attributes.HasChanges,
+				CreatedAt:  response.Data.Attributes.CreatedAt,
+				StateVer:   response.Data.Attributes.StateVer,
+			},
+			Relationships: models.RunEventRelationships{
+				Workspace: models.Relationship{
+					Data: models.RelationshipData{
+						ID:   response.Data.Relationships.Workspace.Data.ID,
+						Type: response.Data.Relationships.Workspace.Data.Type,
+					},
+				},
+				ConfigurationVersion: models.Relationship{
+					Data: models.RelationshipData{
+						ID:   response.Data.Relationships.ConfigurationVersion.Data.ID,
+						Type: response.Data.Relationships.ConfigurationVersion.Data.Type,
+					},
+				},
+				StateVersion: models.Relationship{
+					Data: models.RelationshipData{
+						ID:   response.Data.Relationships.StateVersion.Data.ID,
+						Type: response.Data.Relationships.StateVersion.Data.Type,
+					},
+				},
+			},
+		}
+		return run, nil
+
+	default:
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s",
+			resp.StatusCode, string(body))
+	}
 }
 
 func (c *Client) newRequest(method, path string, payload interface{}) (*http.Request, error) {

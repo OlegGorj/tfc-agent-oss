@@ -3,22 +3,43 @@ package models
 import "time"
 
 type AgentConfig struct {
-	Name         string
-	Token        string
-	Address      string
-	Tags         []string
-	LogLevel     string
-	WorkspaceDir string
+	Name         string   `json:"name"`
+	Token        string   `json:"token"`
+	Address      string   `json:"address"`
+	Tags         []string `json:"tags"`
+	LogLevel     string   `json:"log_level"`
+	WorkspaceDir string   `json:"workspace_dir"`
+	AgentID      string   `json:"agent_id,omitempty"`      // Added for tracking
+	AgentPoolID  string   `json:"agent_pool_id,omitempty"` // Optional
 }
 
 type RunEvent struct {
-	ID         string    `json:"id"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID            string                `json:"id"`
+	Type          string                `json:"type"`
+	Attributes    RunEventAttributes    `json:"attributes"`
+	Relationships RunEventRelationships `json:"relationships"`
+}
+
+type RunEventAttributes struct {
 	Status     string    `json:"status"`
 	HasChanges bool      `json:"has_changes"`
-	Workspace  Workspace `json:"workspace"`
-	ConfigVer  string    `json:"configuration_version"`
+	CreatedAt  time.Time `json:"created_at"`
 	StateVer   string    `json:"state_version"`
+}
+
+type RunEventRelationships struct {
+	Workspace            Relationship `json:"workspace"`
+	ConfigurationVersion Relationship `json:"configuration_version"`
+	StateVersion         Relationship `json:"state_version"`
+}
+
+type Relationship struct {
+	Data RelationshipData `json:"data"`
+}
+
+type RelationshipData struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
 type Workspace struct {
