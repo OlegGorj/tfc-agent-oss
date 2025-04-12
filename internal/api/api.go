@@ -12,6 +12,19 @@ import (
 	"github.com/oleggorj/tfc-agent-oss/internal/models"
 )
 
+type APIClient interface {
+	RegisterAgent(config *models.AgentConfig) error
+	PollForRuns() (*models.RunEvent, error)
+	DownloadRunConfigurationVersion(configVer string) (string, error)
+	DownloadRunStateVersion(stateVer string) (string, error)
+	DownloadRunArtifact(runID, artifactType string) (string, error)
+	SaveFile(url, filePath string) error
+	UploadRunPlan(runID, filePath string) (string, error)
+	UploadRunState(runID, filePath string) (string, error)
+	UpdateRunStatus(runID, status string) error
+	UpdateRunState(runID string, hasChanges bool) error
+}
+
 type Client struct {
 	baseURL    string
 	token      string

@@ -12,9 +12,18 @@ import (
 	"github.com/oleggorj/tfc-agent-oss/internal/models"
 )
 
+var execCommand = exec.CommandContext
+
 type TerraformExecutor struct {
 	workDir string
-	client  *api.Client
+	client  api.APIClient
+}
+
+func NewTerraformExecutor(workDir string, client api.APIClient) *TerraformExecutor {
+	return &TerraformExecutor{
+		workDir: workDir,
+		client:  client,
+	}
 }
 
 func (e *TerraformExecutor) ExecuteRun(ctx context.Context, run *models.RunEvent) error {
@@ -54,7 +63,7 @@ func (e *TerraformExecutor) ExecuteRun(ctx context.Context, run *models.RunEvent
 }
 
 func (e *TerraformExecutor) runTerraformCommand(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "terraform", args...)
+	cmd := execCommand(ctx, "terraform", args...)
 	cmd.Dir = dir
 
 	output, err := cmd.CombinedOutput()
@@ -151,22 +160,16 @@ func (e *TerraformExecutor) uploadState(runID string, dir string) error {
 
 	return nil
 }
-func NewTerraformExecutor(workDir string, client *api.Client) *TerraformExecutor {
-	return &TerraformExecutor{
-		workDir: workDir,
-		client:  client,
-	}
-}
 func (e *TerraformExecutor) SetWorkDir(workDir string) {
 	e.workDir = workDir
 }
 func (e *TerraformExecutor) GetWorkDir() string {
 	return e.workDir
 }
-func (e *TerraformExecutor) SetClient(client *api.Client) {
+func (e *TerraformExecutor) SetClient(client api.APIClient) {
 	e.client = client
 }
-func (e *TerraformExecutor) GetClient() *api.Client {
+func (e *TerraformExecutor) GetClient() api.APIClient {
 	return e.client
 }
 func (e *TerraformExecutor) Execute(ctx context.Context, run *models.RunEvent) error {
