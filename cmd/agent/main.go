@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -14,8 +15,9 @@ import (
 )
 
 func main() {
+	randomSuffix := fmt.Sprintf("%08x", time.Now().UnixNano())[0:8]
 	cfg := &models.AgentConfig{
-		Name:         getEnvOrDefault("TF_AGENT_NAME", "tfc-agent-oss"),
+		Name:         fmt.Sprintf("%s-%s", getEnvOrDefault("TF_AGENT_NAME", "tfc-agent-oss"), randomSuffix),
 		Token:        os.Getenv("TF_API_TOKEN"),
 		Address:      getEnvOrDefault("TF_ADDRESS", "https://app.terraform.io"),
 		WorkspaceDir: getEnvOrDefault("TF_WORKSPACE_DIR", "/tmp/terraform-runs"),
@@ -33,12 +35,21 @@ func main() {
 		log.Fatalf("Failed to create workspace directory: %v", err)
 	}
 
+	// Add debug logging
+	log.Printf("Starting agent with config:")
+	log.Printf("Name: %s", cfg.Name)
+	log.Printf("Address: %s", cfg.Address)
+	log.Printf("Workspace Dir: %s", cfg.WorkspaceDir)
+	log.Printf("Agent Pool ID: %s", cfg.AgentPoolID)
+	log.Printf("Organization: %s", os.Getenv("TF_ORGANIZATION"))
+
 	// Register agent with retries
 	log.Printf("Registering agent %s...", cfg.Name)
 	if err := client.RegisterAgent(cfg); err != nil {
 		log.Fatalf("Failed to register agent: %v", err)
 	}
 	log.Printf("Agent registered successfully with ID: %s", cfg.AgentID)
+	log.Printf("Agent token received: %s", cfg.Token[:8]+"...")
 
 	executor := executor.NewTerraformExecutor(cfg.WorkspaceDir, client)
 
@@ -67,7 +78,7 @@ func main() {
 			return
 		default:
 			log.Printf("Polling for runs...")
-			run, err := client.PollForRuns()
+			run, err := client.PollForRuns(cfg)
 			if err != nil {
 				log.Printf("Error polling for runs: %v", err)
 				if os.Getenv("TF_LOG") == "debug" {

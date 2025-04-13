@@ -11,6 +11,7 @@ type AgentConfig struct {
 	WorkspaceDir string   `json:"workspace_dir"`
 	AgentID      string   `json:"agent_id,omitempty"`      // Added for tracking
 	AgentPoolID  string   `json:"agent_pool_id,omitempty"` // Optional
+	AgentToken   string   `json:"agent_token"`
 }
 
 type RunEvent struct {
@@ -18,6 +19,7 @@ type RunEvent struct {
 	Type          string                `json:"type"`
 	Attributes    RunEventAttributes    `json:"attributes"`
 	Relationships RunEventRelationships `json:"relationships"`
+	ConfigVer     string                `json:"configuration_version,omitempty"` // Legacy support
 }
 
 type RunEventAttributes struct {
